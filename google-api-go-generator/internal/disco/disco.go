@@ -18,6 +18,7 @@ type Document struct {
 	ID                string             `json:"id"`
 	Name              string             `json:"name"`
 	Version           string             `json:"version"`
+	Revision          string             `json:"revision"`
 	Title             string             `json:"title"`
 	RootURL           string             `json:"rootUrl"`
 	ServicePath       string             `json:"servicePath"`
