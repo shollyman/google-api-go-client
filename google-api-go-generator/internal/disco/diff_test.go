@@ -6,9 +6,10 @@ package disco
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
 	"io/ioutil"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestDiff(t *testing.T) {
@@ -21,17 +22,17 @@ func TestDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := diffDocs(old, new)
+	got := DiffDocs(old, new, AllOptions)
 
 	want := []*DiffEntry{
 		{
-			ChangeType:  ChangeTypeModify,
-			ElementKind: "Version",
-			OldValue:    "v1",
-			NewValue:    "v99",
+			ChangeType:  ModifyChange,
+			ElementKind: "Revision",
+			OldValue:    "20161109",
+			NewValue:    "20191101",
 		},
 		{
-			ChangeType:  ChangeTypeModify,
+			ChangeType:  ModifyChange,
 			ElementKind: "Title",
 			OldValue:    "Cloud Storage JSON API",
 			NewValue:    "Cloud StOrAGe JSON API",
