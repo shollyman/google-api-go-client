@@ -97,7 +97,7 @@
      "Bucket": {
       "id": "Bucket",
       "type": "object",
-      "description": "A big bucket.",
+      "description": "A really big bucket.",
       "properties": {
        "cors": {
         "type": "array",

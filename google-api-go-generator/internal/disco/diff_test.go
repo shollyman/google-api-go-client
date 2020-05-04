@@ -27,15 +27,47 @@ func TestDiff(t *testing.T) {
 	want := []*DiffEntry{
 		{
 			ChangeType:  ModifyChange,
-			ElementKind: "Revision",
+			ElementKind: StringFieldKind,
+			ElementID:   "Revision",
 			OldValue:    "20161109",
 			NewValue:    "20191101",
 		},
 		{
 			ChangeType:  ModifyChange,
-			ElementKind: "Title",
+			ElementKind: StringFieldKind,
+			ElementID:   "Title",
 			OldValue:    "Cloud Storage JSON API",
 			NewValue:    "Cloud StOrAGe JSON API",
+		},
+		{
+			ChangeType:  DeleteChange,
+			ElementKind: SchemaKind,
+			ElementID:   "Schemas.VariantExample",
+		},
+		{
+			ChangeType:  AddChange,
+			ElementKind: SchemaKind,
+			ElementID:   "Schemas.Shovel",
+			Children: []*DiffEntry{
+				{
+					ChangeType:  AddChange,
+					ElementKind: StringFieldKind,
+					ElementID:   "ID",
+					NewValue:    "Shovel",
+				},
+				{
+					ChangeType:  AddChange,
+					ElementKind: StringFieldKind,
+					ElementID:   "Type",
+					NewValue:    "object",
+				},
+				{
+					ChangeType:  AddChange,
+					ElementKind: StringFieldKind,
+					ElementID:   "Name",
+					NewValue:    "Shovel",
+				},
+			},
 		},
 	}
 
@@ -52,7 +84,7 @@ func TestDiff(t *testing.T) {
 		}
 	}
 
-	fmt.Printf(printDiff(got))
+	fmt.Printf(renderDiff(got))
 }
 
 // quick helper for loading doc
