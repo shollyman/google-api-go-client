@@ -23,6 +23,7 @@ func TestDiff(t *testing.T) {
 	}
 
 	got := DiffDocs(old, new, AllOptions)
+	// got := DiffDocs(old, new, ResourceOption)
 
 	want := []*DiffEntry{
 		{
@@ -85,6 +86,7 @@ func TestDiff(t *testing.T) {
 	}
 
 	fmt.Printf(renderDiff(got))
+
 }
 
 // quick helper for loading doc

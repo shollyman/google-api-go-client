@@ -7,8 +7,11 @@ package disco
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
+
+	"log"
 )
 
 // DiffOptions is a bitmask for defining diff behavior.
@@ -95,47 +98,40 @@ func DiffDocs(old, new *Document, options DiffOptions) []*DiffEntry {
 			entries = append(entries, diffs...)
 		}
 	}
+	if Has(options, ResourceOption) {
+		if diffs := compareResources(old.Resources, new.Resources, Has(options, DescriptionOption)); diffs != nil {
+			entries = append(entries, diffs...)
+		}
+	}
 	return entries
 }
 
 func compareIdentifiers(old, new *Document) []*DiffEntry {
-	var partialDiffs []*DiffEntry
-	if d := diffString("ID", old.Name, new.Name); d != nil {
-		partialDiffs = append(partialDiffs, d)
+	diffs, err := getFieldDiffs(old, new, []string{"ID", "Name"}, false)
+	if err != nil {
+		log.Fatalf("compareIdentifiers: %v", err)
+		return nil
 	}
-	if d := diffString("Name", old.Name, new.Name); d != nil {
-		partialDiffs = append(partialDiffs, d)
-	}
-	return partialDiffs
+	return diffs
 }
 
 func compareVersioning(old, new *Document) []*DiffEntry {
-	var partialDiffs []*DiffEntry
-	if d := diffString("Revision", old.Revision, new.Revision); d != nil {
-		partialDiffs = append(partialDiffs, d)
+	diffs, err := getFieldDiffs(old, new, []string{"Revision"}, false)
+	if err != nil {
+		log.Fatalf("compareVersioning: %v", err)
+		return nil
 	}
-	return partialDiffs
+	return diffs
 }
 
 func compareServiceOptions(old, new *Document) []*DiffEntry {
-	var partialDiffs []*DiffEntry
-	if d := diffString("Title", old.Title, new.Title); d != nil {
-		partialDiffs = append(partialDiffs, d)
+	//TODO(shollyman): compare Features, which is a slice of strings
+	diffs, err := getFieldDiffs(old, new, []string{"Title", "RootURL", "ServicePath", "BasePath", "DocumentationLink"}, false)
+	if err != nil {
+		log.Fatalf("compareVersioning: %v", err)
+		return nil
 	}
-	if d := diffString("RootURL", old.RootURL, new.RootURL); d != nil {
-		partialDiffs = append(partialDiffs, d)
-	}
-	if d := diffString("ServicePath", old.ServicePath, new.ServicePath); d != nil {
-		partialDiffs = append(partialDiffs, d)
-	}
-	if d := diffString("BasePath", old.BasePath, new.BasePath); d != nil {
-		partialDiffs = append(partialDiffs, d)
-	}
-	if d := diffString("DocumentationLink", old.DocumentationLink, new.DocumentationLink); d != nil {
-		partialDiffs = append(partialDiffs, d)
-	}
-	//TODO(shollyman): compare Features, which is a slice of strings)
-	return partialDiffs
+	return diffs
 }
 
 func compareSchemas(old, new *Document, checkDescriptions bool) []*DiffEntry {
@@ -200,57 +196,21 @@ func compareSchemas(old, new *Document, checkDescriptions bool) []*DiffEntry {
 }
 
 func compareSingleSchema(old, new *Schema, checkDescriptions bool) []*DiffEntry {
-	var fieldDiffs []*DiffEntry
 
-	if d := diffString("ID", old.ID, new.ID); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Type", old.Type, new.Type); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Format", old.Format, new.Format); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if checkDescriptions {
-		if d := diffString("Description", old.Description, new.Description); d != nil {
-			fieldDiffs = append(fieldDiffs, d)
-		}
-	}
-	if d := diffString("Ref", old.Ref, new.Ref); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Default", old.Default, new.Default); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Pattern", old.Pattern, new.Pattern); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Name", old.Name, new.Name); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
 	// TODO: ItemSchema, AdditionalProperties, Enums, EnumDescriptions, Kind
-	return fieldDiffs
+	diffs, err := getFieldDiffs(old, new, []string{"ID", "Type", "Format", "Description", "Ref", "Default", "Pattern", "Name"}, false)
+	if err != nil {
+		log.Fatalf("compareSingleSchema: %v", err)
+		return nil
+	}
+	return diffs
+}
+
+func compareMethods(old, new MethodList, checkDescriptions bool) []*DiffEntry {
+	return nil
 }
 
 func compareSingleMethod(old, new *Method, checkDescriptions bool) []*DiffEntry {
-	var fieldDiffs []*DiffEntry
-	if d := diffString("Name", old.Name, new.Name); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("ID", old.ID, new.ID); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("Path", old.Path, new.Path); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if d := diffString("HTTPMethod", old.HTTPMethod, new.HTTPMethod); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-	if checkDescriptions {
-		if d := diffString("Description", old.HTTPMethod, new.HTTPMethod); d != nil {
-			fieldDiffs = append(fieldDiffs, d)
-		}
-	}
 
 	// TODO Parameters
 	// TODO ParameterOrder
@@ -258,19 +218,108 @@ func compareSingleMethod(old, new *Method, checkDescriptions bool) []*DiffEntry 
 	// TODO Response (schema)
 	// TODO Scopes
 	// TODO MediaUpload
-
-	if d := diffBool("SupportsMediaDownload", old.SupportsMediaDownload, new.SupportsMediaDownload); d != nil {
-		fieldDiffs = append(fieldDiffs, d)
-	}
-
 	// TODO(maybe?) JSONMap
 
-	return fieldDiffs
+	diffs, err := getFieldDiffs(old, new, []string{"Name", "ID", "Path", "HTTPMethod", "Description", "SupportsMediaDownload"}, false)
+	if err != nil {
+		log.Fatalf("compareSingleMethod: %v", err)
+		return nil
+	}
+	return diffs
 }
 
-func compareResources(old, new *Document, checkDesciptions bool) []*DiffEntry {
-	// TODO: implement
-	return nil
+func compareResources(oldList, newList ResourceList, checkDescriptions bool) []*DiffEntry {
+	// Resources are presented in the discovery document using a list, rather than keyed by
+	// identifier in a map as schemas are.  Thereforce, we use the Name field of each resource
+	// element for the comparison identity.
+
+	//The discovery reference doesn't indicate special uniqueness rules.
+
+	var partialDiffs []*DiffEntry
+
+	// first, we'll place the old and new resources into maps keyed on Name to make accessing simpler.
+	keys := make(map[string]bool)
+	oldMap := make(map[string]*Resource)
+	newMap := make(map[string]*Resource)
+	for _, m := range oldList {
+		keyName := m.Name
+		oldMap[keyName] = m
+		keys[keyName] = true
+	}
+	for _, m := range newList {
+		keyName := m.Name
+		newMap[keyName] = m
+		keys[keyName] = true
+	}
+
+	sortedKeys := make([]string, 0, len(keys))
+	for k := range keys {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
+	// Walk each of the keys to compare resources.
+	for _, k := range sortedKeys {
+		keyName := k
+
+		entry := &DiffEntry{
+			ElementKind: ResourceKind,
+			ElementID:   fmt.Sprintf("Resources.%s", keyName),
+		}
+		oldResource := oldMap[keyName]
+		newResource := newMap[keyName]
+		if oldResource == nil {
+			if newResource != nil {
+				fieldDiffs := compareSingleResource(&Resource{}, newResource, checkDescriptions)
+				if fieldDiffs != nil {
+					entry.ChangeType = AddChange
+					// recursively amend this, since all "modifications" are actually additions
+					amendChangeType(fieldDiffs, AddChange)
+					entry.Children = fieldDiffs
+					partialDiffs = append(partialDiffs, entry)
+				}
+			}
+			continue
+		}
+		if newResource != nil {
+			fieldDiffs := compareSingleResource(oldResource, newResource, checkDescriptions)
+			if fieldDiffs != nil {
+				entry.ChangeType = ModifyChange
+				entry.Children = fieldDiffs
+				partialDiffs = append(partialDiffs, entry)
+			}
+		} else {
+			entry.ChangeType = DeleteChange
+			partialDiffs = append(partialDiffs, entry)
+		}
+	}
+	return partialDiffs
+}
+
+func amendChangeType(entries []*DiffEntry, newType ChangeType) {
+	for _, e := range entries {
+		e.ChangeType = newType
+		if e.Children != nil {
+			amendChangeType(e.Children, newType)
+		}
+	}
+}
+
+func compareSingleResource(old, new *Resource, checkDescriptions bool) []*DiffEntry {
+	// It's turtles all the way down.  A resource can have a list of resources as children, as well
+	// as a list of methods.
+	var partialDiffs []*DiffEntry
+
+	if d := diffString("Name", old.Name, new.Name); d != nil {
+		partialDiffs = append(partialDiffs, d)
+	}
+	if dSlice := compareResources(old.Resources, new.Resources, checkDescriptions); dSlice != nil {
+		partialDiffs = append(partialDiffs, dSlice...)
+	}
+	if dSlice := compareMethods(old.Methods, new.Methods, checkDescriptions); dSlice != nil {
+		partialDiffs = append(partialDiffs, dSlice...)
+	}
+	return partialDiffs
 }
 
 func renderDiff(entries []*DiffEntry) string {
@@ -362,4 +411,72 @@ func diffBool(id string, old, new bool) *DiffEntry {
 		}
 	}
 	return nil
+}
+
+// getFieldDiffs is able to compute diffs for simple fields like strings/bools, using reflection,
+func getFieldDiffs(old, new interface{}, fieldNames []string, checkDescriptions bool) ([]*DiffEntry, error) {
+	var partialDiffs []*DiffEntry
+
+	vOld := reflect.ValueOf(old).Elem()
+	vNew := reflect.ValueOf(new).Elem()
+
+	if !vOld.IsValid() || !vNew.IsValid() {
+		return nil, fmt.Errorf("getFieldDiffs: invalid references for old and new")
+	}
+	if vOld.Type() != vNew.Type() {
+		return nil, fmt.Errorf("getFieldDiffs: incompatible types %v and %v", vOld.Type(), vNew.Type())
+	}
+	for _, fn := range fieldNames {
+		fOld := vOld.FieldByName(fn)
+		fNew := vNew.FieldByName(fn)
+		if !fOld.IsValid() || !fNew.IsValid() {
+			return nil, fmt.Errorf("getFieldDiffs: field %s invalid", fn)
+		}
+		switch fOld.Kind() {
+		case reflect.String:
+			if checkDescriptions || fn != "Description" {
+				if fOld.String() != fNew.String() {
+					partialDiffs = append(partialDiffs, &DiffEntry{
+						ChangeType:  ModifyChange,
+						ElementKind: StringFieldKind,
+						ElementID:   fn,
+						OldValue:    fOld.String(),
+						NewValue:    fNew.String(),
+					})
+				}
+			}
+		case reflect.Bool:
+			if fOld.Bool() != fNew.Bool() {
+				partialDiffs = append(partialDiffs, &DiffEntry{
+					ChangeType:  ModifyChange,
+					ElementKind: BoolFieldKind,
+					ElementID:   fn,
+					OldValue:    fmt.Sprintf("%t", fOld.Bool()),
+					NewValue:    fmt.Sprintf("%t", fNew.Bool()),
+				})
+			}
+		default:
+			return nil, fmt.Errorf("getFieldDiffs: field %s not simple scalar", fn)
+		}
+	}
+	return partialDiffs, nil
+}
+
+func getObjectDiffs(old, new interface{}, checkDescriptions bool) ([]*DiffEntry, error) {
+	tOld := reflect.TypeOf(old).Elem()
+	tNew := reflect.TypeOf(new).Elem()
+
+	if tOld.Name() != tNew.Name() {
+		return nil, fmt.Errorf("mismatch on old/new types: old is %s, new is %s", tOld.Name(), tNew.Name())
+	}
+
+	vOld := reflect.ValueOf(old).Elem()
+	vNew := reflect.ValueOf(new).Elem()
+
+	if vOld.Type() != vNew.Type() {
+		return nil, fmt.Errorf("mismatch on value types: %v, %v", vOld.Type(), vNew.Type())
+	}
+	fmt.Printf("type name: %s\n", tOld.Name())
+
+	return nil, nil
 }
