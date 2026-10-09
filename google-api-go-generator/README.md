@@ -34,6 +34,7 @@ all of the client libraries in this repository
 - `internaloption_pkg` (`string`): Go package path of the
   'api/option/internaloption' support package. (default
   "google.golang.org/api/option/internaloption")
+- `json` (`bool`): Emit output in JSON format.
 - `option_pkg` (`string`): Go package path of the 'api/option' support package.
   (default "google.golang.org/api/option")
 - `output` (`string`): (optional) Path to source output file. If not specified,

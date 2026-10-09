@@ -9,9 +9,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -373,3 +375,181 @@ func TestApiBaseURLTemplate(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIRevision(t *testing.T) {
+	tests := []struct {
+		file string
+		want string
+	}{
+		{"any.json", "20150326"},
+		{"rev20200415.json", "20200415"},
+		{"rev20200416.json", "20200416"},
+		{"paging.json", "20160927"},
+	}
+	for _, tt := range tests {
+		api, err := apiFromFile(filepath.Join("testdata", tt.file))
+		if err != nil {
+			t.Fatalf("apiFromFile(%s): %v", tt.file, err)
+		}
+		if got := api.revision(); got != tt.want {
+			t.Errorf("api.revision() for %s = %q; want %q", tt.file, got, tt.want)
+		}
+	}
+}
+
+func TestAPIResultJSON(t *testing.T) {
+	res := &APIResult{
+		APIID:      "test:v1",
+		ID:         "test:v1",
+		RevisionID: "20261008",
+		Revision:   "20261008",
+		Success:    true,
+		Successful: true,
+	}
+
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if m["api_id"] != "test:v1" || m["id"] != "test:v1" {
+		t.Errorf("expected api_id and id to be test:v1, got %v / %v", m["api_id"], m["id"])
+	}
+	if m["revision_id"] != "20261008" || m["revision"] != "20261008" {
+		t.Errorf("expected revision_id and revision to be 20261008, got %v / %v", m["revision_id"], m["revision"])
+	}
+	if m["success"] != true || m["successful"] != true {
+		t.Errorf("expected success and successful to be true, got %v / %v", m["success"], m["successful"])
+	}
+	if _, ok := m["error"]; ok {
+		t.Errorf("expected error to be omitted when empty, got %v", m["error"])
+	}
+
+	// Test with error
+	failRes := &APIResult{
+		APIID:      "fail:v1",
+		ID:         "fail:v1",
+		RevisionID: "20261008",
+		Revision:   "20261008",
+		Success:    false,
+		Successful: false,
+		Error:      "something went wrong",
+	}
+	bFail, err := json.Marshal(failRes)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	var mFail map[string]interface{}
+	if err := json.Unmarshal(bFail, &mFail); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if mFail["success"] != false || mFail["successful"] != false {
+		t.Errorf("expected success and successful to be false, got %v / %v", mFail["success"], mFail["successful"])
+	}
+	if mFail["error"] != "something went wrong" {
+		t.Errorf("expected error to be 'something went wrong', got %v", mFail["error"])
+	}
+}
+
+func TestGenerateAPIs(t *testing.T) {
+	tempDir := t.TempDir()
+	outPath := filepath.Join(tempDir, "out-gen.go")
+
+	oldOutput := *output
+	oldJSONFile := *jsonFile
+	oldJSONOutput := *jsonOutput
+	defer func() {
+		*output = oldOutput
+		*jsonFile = oldJSONFile
+		*jsonOutput = oldJSONOutput
+	}()
+
+	testFile := filepath.Join("testdata", "any.json")
+	*jsonFile = testFile
+	*output = outPath
+	*jsonOutput = true
+
+	api, err := apiFromFile(testFile)
+	if err != nil {
+		t.Fatalf("apiFromFile: %v", err)
+	}
+
+	matches, results, errs := generateAPIs([]*API{api})
+	if len(errs) > 0 {
+		t.Fatalf("generateAPIs returned errors: %v", errs)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(matches))
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	r := results[0]
+	if r.APIID != "logging:v1beta3" || r.ID != "logging:v1beta3" {
+		t.Errorf("API ID: got %q / %q, want 'logging:v1beta3'", r.APIID, r.ID)
+	}
+	if r.RevisionID != "20150326" || r.Revision != "20150326" {
+		t.Errorf("Revision ID: got %q / %q, want '20150326'", r.RevisionID, r.Revision)
+	}
+	if !r.Success || !r.Successful {
+		t.Errorf("Success: got %v / %v, want true", r.Success, r.Successful)
+	}
+}
+
+func TestGeneratorJSONCLI(t *testing.T) {
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "generator")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build generator binary: %v\n%s", err, out)
+	}
+
+	for _, flagName := range []string{"-json", "-json_output"} {
+		t.Run(flagName, func(t *testing.T) {
+			outFile := filepath.Join(tempDir, fmt.Sprintf("any-gen-%s.go", strings.TrimPrefix(flagName, "-")))
+			specFile := filepath.Join("testdata", "any.json")
+
+			cmd := exec.Command(binPath, flagName, "-api_json_file="+specFile, "-output="+outFile)
+			stdout, err := cmd.Output()
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					t.Fatalf("command failed with stderr: %s", exitErr.Stderr)
+				}
+				t.Fatalf("command failed: %v", err)
+			}
+
+			var results []struct {
+				APIID      string `json:"api_id"`
+				ID         string `json:"id"`
+				RevisionID string `json:"revision_id"`
+				Revision   string `json:"revision"`
+				Success    bool   `json:"success"`
+				Successful bool   `json:"successful"`
+			}
+			if err := json.Unmarshal(stdout, &results); err != nil {
+				t.Fatalf("failed to parse JSON output %q: %v", string(stdout), err)
+			}
+
+			if len(results) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(results))
+			}
+			if results[0].APIID != "logging:v1beta3" || results[0].ID != "logging:v1beta3" {
+				t.Errorf("API ID: got %q / %q, want 'logging:v1beta3'", results[0].APIID, results[0].ID)
+			}
+			if results[0].RevisionID != "20150326" || results[0].Revision != "20150326" {
+				t.Errorf("Revision ID: got %q / %q, want '20150326'", results[0].RevisionID, results[0].Revision)
+			}
+			if !results[0].Success || !results[0].Successful {
+				t.Errorf("Success: got %v / %v, want true", results[0].Success, results[0].Successful)
+			}
+		})
+	}
+}
+

@@ -65,8 +65,15 @@ var (
 
 	copyrightYear = flag.String("copyright_year", fmt.Sprintf("%d", time.Now().Year()), "Year for copyright.")
 
+	jsonOutput = flag.Bool("json", false, "Emit output in JSON format.")
+
 	serviceTypes = []string{"Service", "APIService"}
 )
+
+func init() {
+	flag.BoolVar(jsonOutput, "json_output", false, "Emit output in JSON format (alias for -json).")
+	flag.BoolVar(jsonOutput, "json-output", false, "Emit output in JSON format (alias for -json).")
+}
 
 var (
 	errOldRevision = errors.New("revision pulled older than local cached revision")
@@ -114,6 +121,8 @@ type API struct {
 
 	p  func(format string, args ...interface{}) // print raw
 	pn func(format string, args ...interface{}) // print with newline
+
+	rev string
 }
 
 func (a *API) sortedSchemaNames() (names []string) {
@@ -126,6 +135,43 @@ func (a *API) sortedSchemaNames() (names []string) {
 
 func (a *API) Schema(name string) *Schema {
 	return a.schemas[name]
+}
+
+func (a *API) revision() string {
+	if a.rev != "" {
+		return a.rev
+	}
+	b, err := a.jsonBytes()
+	if err == nil && len(b) > 0 {
+		var docRev struct {
+			Revision string `json:"revision"`
+		}
+		if err := json.Unmarshal(b, &docRev); err == nil && docRev.Revision != "" {
+			a.rev = docRev.Revision
+			return a.rev
+		}
+	}
+	if existing, err := os.ReadFile(a.JSONFile()); err == nil {
+		var docRev struct {
+			Revision string `json:"revision"`
+		}
+		if err := json.Unmarshal(existing, &docRev); err == nil {
+			a.rev = docRev.Revision
+			return a.rev
+		}
+	}
+	return ""
+}
+
+// APIResult represents the generation outcome for an API.
+type APIResult struct {
+	APIID      string `json:"api_id"`
+	ID         string `json:"id"`
+	RevisionID string `json:"revision_id"`
+	Revision   string `json:"revision"`
+	Success    bool   `json:"success"`
+	Successful bool   `json:"successful"`
+	Error      string `json:"error,omitempty"`
 }
 
 type generateError struct {
@@ -146,34 +192,39 @@ func (e *compileError) Error() string {
 	return fmt.Sprintf("API %s failed to compile:\n%v", e.api.ID, e.output)
 }
 
-func main() {
-	flag.Parse()
-
-	if *install {
-		*build = true
-	}
-
-	var (
-		apiIds  = []string{}
-		matches = []*API{}
-		errs    = []error{}
-	)
-	for _, api := range getAPIs() {
-		apiIds = append(apiIds, api.ID)
+func generateAPIs(apis []*API) (matches []*API, results []*APIResult, errs []error) {
+	results = []*APIResult{}
+	for _, api := range apis {
 		if !api.want() {
 			continue
 		}
 		matches = append(matches, api)
-		log.Printf("Generating API %s", api.ID)
+		if !*jsonOutput {
+			log.Printf("Generating API %s", api.ID)
+		}
 		err := api.WriteGeneratedCode()
-		if err == errOldRevision {
-			log.Printf("Old revision found for %s, skipping generation", api.ID)
-			continue
-		} else if err != nil && !errors.Is(err, errNoDoc) {
-			errs = append(errs, &generateError{api, err})
+		if err != nil {
+			if err == errOldRevision {
+				if !*jsonOutput {
+					log.Printf("Old revision found for %s, skipping generation", api.ID)
+				}
+			} else if !errors.Is(err, errNoDoc) {
+				errs = append(errs, &generateError{api, err})
+			}
+			results = append(results, &APIResult{
+				APIID:      api.ID,
+				ID:         api.ID,
+				RevisionID: api.revision(),
+				Revision:   api.revision(),
+				Success:    false,
+				Successful: false,
+				Error:      err.Error(),
+			})
 			continue
 		}
-		if *build && err == nil {
+
+		buildErr := false
+		if *build {
 			var args []string
 			if *install {
 				args = append(args, "install")
@@ -183,19 +234,75 @@ func main() {
 			args = append(args, api.Target())
 			out, err := exec.Command("go", args...).CombinedOutput()
 			if err != nil {
+				buildErr = true
 				errs = append(errs, &compileError{api, string(out)})
+				results = append(results, &APIResult{
+					APIID:      api.ID,
+					ID:         api.ID,
+					RevisionID: api.revision(),
+					Revision:   api.revision(),
+					Success:    false,
+					Successful: false,
+					Error:      string(out),
+				})
 			}
 		}
+
+		if !buildErr {
+			results = append(results, &APIResult{
+				APIID:      api.ID,
+				ID:         api.ID,
+				RevisionID: api.revision(),
+				Revision:   api.revision(),
+				Success:    true,
+				Successful: true,
+			})
+		}
+	}
+	return matches, results, errs
+}
+
+func emitJSON(results []*APIResult) error {
+	b, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+func main() {
+	flag.Parse()
+
+	if *install {
+		*build = true
 	}
 
+	allAPIs := getAPIs()
+	apiIds := make([]string, 0, len(allAPIs))
+	for _, api := range allAPIs {
+		apiIds = append(apiIds, api.ID)
+	}
+
+	matches, results, errs := generateAPIs(allAPIs)
+
 	if len(matches) == 0 {
+		if *jsonOutput {
+			emitJSON(results)
+		}
 		log.Fatalf("No APIs matched %q; options are %v", *apiToGenerate, apiIds)
 	}
 
+	if *jsonOutput {
+		emitJSON(results)
+	}
+
 	if len(errs) > 0 {
-		log.Printf("%d API(s) failed to generate or compile:", len(errs))
-		for _, ce := range errs {
-			log.Println(ce.Error())
+		if !*jsonOutput {
+			log.Printf("%d API(s) failed to generate or compile:", len(errs))
+			for _, ce := range errs {
+				log.Println(ce.Error())
+			}
 		}
 		os.Exit(1)
 	}
